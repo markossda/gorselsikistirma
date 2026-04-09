@@ -34,10 +34,7 @@
             background: #1a1a1a;
         }
 
-        .drop-zone:hover, .drop-zone.dragover {
-            border-color: #666;
-        }
-
+        .drop-zone:hover, .drop-zone.dragover { border-color: #666; }
         .drop-zone p { color: #666; font-size: 14px; }
         .drop-zone .browse { color: #ccc; text-decoration: underline; cursor: pointer; }
         .drop-zone .hint { margin-top: 8px; font-size: 12px; color: #444; }
@@ -99,6 +96,46 @@
 
         .toggle-btn:hover { color: #ccc; }
 
+        /* FOLDER SELECT */
+        .folder-section {
+            display: none;
+            margin-bottom: 20px;
+        }
+
+        .folder-section label {
+            display: block;
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 6px;
+        }
+
+        .folder-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .folder-row select {
+            flex: 1;
+            padding: 10px 12px;
+            background: #1a1a1a;
+            border: 1px solid #222;
+            border-radius: 6px;
+            color: #ccc;
+            font-size: 14px;
+            outline: none;
+            appearance: none;
+            cursor: pointer;
+        }
+
+        .folder-row select:focus { border-color: #444; }
+        .folder-row select option { background: #1a1a1a; }
+
+        .folder-path {
+            font-size: 12px;
+            color: #555;
+            margin-top: 6px;
+        }
+
         .btn-row { display: flex; gap: 10px; margin-bottom: 10px; }
 
         .btn {
@@ -119,6 +156,9 @@
 
         .btn-download { background: #1a1a1a; color: #ccc; border: 1px solid #333; }
         .btn-download:hover:not(:disabled) { background: #222; }
+
+        .btn-upload { background: #4caf50; color: #fff; }
+        .btn-upload:hover:not(:disabled) { background: #43a047; }
 
         .btn-clear {
             background: none;
@@ -210,13 +250,14 @@
         @media (max-width: 600px) {
             .btn-row { flex-direction: column; }
             .stats { flex-direction: column; }
+            .folder-row { flex-direction: column; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Gorsel Sikistirici</h1>
-        <p class="subtitle">Toplu gorsel sikistir ve indir</p>
+        <p class="subtitle">Toplu sikistir, klasor sec, Supabase'e yukle</p>
 
         <div class="drop-zone" id="dropZone">
             <p>Gorselleri surukle birak veya <span class="browse">dosya sec</span></p>
@@ -233,9 +274,25 @@
             <button class="toggle-btn" id="toggleListBtn">Listeyi goster</button>
         </div>
 
+        <div class="folder-section" id="folderSection">
+            <label>Yuklenecek klasor</label>
+            <div class="folder-row">
+                <select id="folderMain">
+                    <option value="">Ana klasor sec...</option>
+                </select>
+                <select id="folderSub" disabled>
+                    <option value="">Alt klasor sec...</option>
+                </select>
+            </div>
+            <div class="folder-path" id="folderPath"></div>
+        </div>
+
         <div class="btn-row">
             <button class="btn btn-primary" id="compressBtn" disabled>Sikistir</button>
             <button class="btn btn-download" id="downloadBtn" disabled>ZIP Indir</button>
+        </div>
+        <div class="btn-row" id="uploadRow" style="display:none">
+            <button class="btn btn-upload" id="uploadBtn" disabled>Supabase'e Yukle</button>
         </div>
         <button class="btn-clear" id="clearBtn" style="display:none">Temizle</button>
 
@@ -247,7 +304,7 @@
         </div>
 
         <div class="results" id="resultsSection">
-            <h2>Sonuclar</h2>
+            <h2 id="resultsTitle">Sonuclar</h2>
             <div class="stats" id="statsContainer"></div>
             <div class="result-list" id="resultsList"></div>
         </div>
@@ -261,17 +318,26 @@
         const toggleListBtn = document.getElementById('toggleListBtn');
         const compressBtn = document.getElementById('compressBtn');
         const downloadBtn = document.getElementById('downloadBtn');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const uploadRow = document.getElementById('uploadRow');
         const clearBtn = document.getElementById('clearBtn');
+        const folderSection = document.getElementById('folderSection');
+        const folderMain = document.getElementById('folderMain');
+        const folderSub = document.getElementById('folderSub');
+        const folderPath = document.getElementById('folderPath');
         const progressSection = document.getElementById('progressSection');
         const progressFill = document.getElementById('progressFill');
         const progressText = document.getElementById('progressText');
         const resultsSection = document.getElementById('resultsSection');
+        const resultsTitle = document.getElementById('resultsTitle');
         const statsContainer = document.getElementById('statsContainer');
         const resultsList = document.getElementById('resultsList');
 
         let selectedFiles = [];
         let listVisible = false;
+        let compressed = false;
 
+        // Drop & file select
         dropZone.addEventListener('click', () => fileInput.click());
 
         dropZone.addEventListener('dragover', (e) => {
@@ -308,26 +374,19 @@
         async function getAllFiles(entries) {
             const files = [];
             const queue = [...entries];
-
             while (queue.length > 0) {
                 const entry = queue.shift();
                 if (entry.isFile) {
                     const file = await new Promise(resolve => entry.file(resolve));
-                    if (file.type.startsWith('image/')) {
-                        files.push(file);
-                    }
+                    if (file.type.startsWith('image/')) files.push(file);
                 } else if (entry.isDirectory) {
                     const reader = entry.createReader();
                     const subEntries = await new Promise(resolve => {
                         const all = [];
                         const readBatch = () => {
                             reader.readEntries(results => {
-                                if (results.length === 0) {
-                                    resolve(all);
-                                } else {
-                                    all.push(...results);
-                                    readBatch();
-                                }
+                                if (results.length === 0) resolve(all);
+                                else { all.push(...results); readBatch(); }
                             });
                         };
                         readBatch();
@@ -345,9 +404,7 @@
 
         function addFiles(files) {
             for (const f of files) {
-                if (f.type && f.type.startsWith('image/')) {
-                    selectedFiles.push(f);
-                }
+                if (f.type && f.type.startsWith('image/')) selectedFiles.push(f);
             }
             if (selectedFiles.length > 0) updateSummary();
         }
@@ -367,7 +424,6 @@
             document.getElementById('summarySize').textContent = formatSize(totalSize);
 
             compressBtn.disabled = total === 0;
-            downloadBtn.disabled = true;
             clearBtn.style.display = total > 0 ? 'block' : 'none';
 
             if (listVisible) renderMiniList();
@@ -394,17 +450,66 @@
 
         clearBtn.addEventListener('click', () => {
             selectedFiles = [];
+            compressed = false;
             fileSummary.style.display = 'none';
             resultsSection.style.display = 'none';
             progressSection.style.display = 'none';
+            folderSection.style.display = 'none';
+            uploadRow.style.display = 'none';
             clearBtn.style.display = 'none';
             compressBtn.disabled = true;
             downloadBtn.disabled = true;
+            uploadBtn.disabled = true;
             listVisible = false;
             fileMiniList.style.display = 'none';
             toggleListBtn.textContent = 'Listeyi goster';
         });
 
+        // Folder loading
+        async function loadFolders(prefix, targetSelect) {
+            targetSelect.innerHTML = '<option value="">Yukleniyor...</option>';
+            targetSelect.disabled = true;
+            try {
+                const res = await fetch('/folders?prefix=' + encodeURIComponent(prefix));
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+
+                targetSelect.innerHTML = '<option value="">Sec...</option>';
+                data.folders.forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    targetSelect.appendChild(opt);
+                });
+                targetSelect.disabled = false;
+            } catch (err) {
+                targetSelect.innerHTML = '<option value="">Hata: ' + err.message + '</option>';
+            }
+        }
+
+        folderMain.addEventListener('change', () => {
+            folderSub.innerHTML = '<option value="">Alt klasor sec...</option>';
+            folderSub.disabled = true;
+            folderPath.textContent = '';
+            uploadBtn.disabled = true;
+
+            if (folderMain.value) {
+                loadFolders(folderMain.value, folderSub);
+            }
+        });
+
+        folderSub.addEventListener('change', () => {
+            if (folderMain.value && folderSub.value) {
+                const path = folderMain.value + '/' + folderSub.value;
+                folderPath.textContent = 'Yol: ' + path;
+                uploadBtn.disabled = false;
+            } else {
+                folderPath.textContent = '';
+                uploadBtn.disabled = true;
+            }
+        });
+
+        // Compress
         compressBtn.addEventListener('click', async () => {
             if (selectedFiles.length === 0) return;
 
@@ -426,37 +531,38 @@
                 try {
                     const res = await fetch('/compress', { method: 'POST', body: formData });
                     const data = await res.json();
-
                     if (data.error) {
-                        batch.forEach(f => allResults.push({
-                            filename: f.name, status: 'error', message: data.error
-                        }));
+                        batch.forEach(f => allResults.push({ filename: f.name, status: 'error', message: data.error }));
                     } else {
                         allResults.push(...data.results);
                     }
                 } catch (err) {
-                    batch.forEach(f => allResults.push({
-                        filename: f.name, status: 'error', message: 'Baglanti hatasi'
-                    }));
+                    batch.forEach(f => allResults.push({ filename: f.name, status: 'error', message: 'Baglanti hatasi' }));
                 }
 
                 const processed = Math.min(selectedFiles.length, i + batch.length);
-                const pct = Math.round((processed / selectedFiles.length) * 100);
-                progressFill.style.width = pct + '%';
+                progressFill.style.width = Math.round((processed / selectedFiles.length) * 100) + '%';
                 progressText.textContent = processed + ' / ' + selectedFiles.length;
             }
 
+            compressed = true;
+            resultsTitle.textContent = 'Sikistirma Sonuclari';
             showResults(allResults);
             compressBtn.disabled = false;
             downloadBtn.disabled = allResults.filter(r => r.status === 'ok').length === 0;
+
+            // Show folder section & upload button
+            folderSection.style.display = 'block';
+            uploadRow.style.display = 'flex';
+            loadFolders('', folderMain);
         });
 
+        // Download ZIP
         downloadBtn.addEventListener('click', async () => {
             downloadBtn.disabled = true;
-            compressBtn.disabled = true;
             progressSection.style.display = 'block';
             progressFill.style.width = '0%';
-            progressText.textContent = 'Hazirlaniyor...';
+            progressText.textContent = 'ZIP hazirlaniyor...';
 
             const formData = new FormData();
             selectedFiles.forEach(f => formData.append('images', f));
@@ -464,7 +570,6 @@
             try {
                 const res = await fetch('/download', { method: 'POST', body: formData });
                 if (!res.ok) throw new Error('Hata');
-
                 progressFill.style.width = '100%';
                 const blob = await res.blob();
                 const url = URL.createObjectURL(blob);
@@ -479,7 +584,54 @@
 
             progressSection.style.display = 'none';
             downloadBtn.disabled = false;
+        });
+
+        // Upload to Supabase
+        uploadBtn.addEventListener('click', async () => {
+            const folder = folderMain.value + '/' + folderSub.value;
+            if (!folderMain.value || !folderSub.value) {
+                alert('Klasor sec');
+                return;
+            }
+
+            uploadBtn.disabled = true;
+            compressBtn.disabled = true;
+            downloadBtn.disabled = true;
+            progressSection.style.display = 'block';
+            progressFill.style.width = '0%';
+            progressText.textContent = 'Supabase\'e yukleniyor...';
+
+            const batchSize = 3;
+            const allResults = [];
+
+            for (let i = 0; i < selectedFiles.length; i += batchSize) {
+                const batch = selectedFiles.slice(i, i + batchSize);
+                const formData = new FormData();
+                batch.forEach(f => formData.append('images', f));
+                formData.append('folder', folder);
+
+                try {
+                    const res = await fetch('/upload', { method: 'POST', body: formData });
+                    const data = await res.json();
+                    if (data.error) {
+                        batch.forEach(f => allResults.push({ filename: f.name, status: 'error', message: data.error }));
+                    } else {
+                        allResults.push(...data.results);
+                    }
+                } catch (err) {
+                    batch.forEach(f => allResults.push({ filename: f.name, status: 'error', message: 'Baglanti hatasi' }));
+                }
+
+                const processed = Math.min(selectedFiles.length, i + batch.length);
+                progressFill.style.width = Math.round((processed / selectedFiles.length) * 100) + '%';
+                progressText.textContent = processed + ' / ' + selectedFiles.length + ' yuklendi';
+            }
+
+            resultsTitle.textContent = 'Yukleme Sonuclari';
+            showResults(allResults);
+            uploadBtn.disabled = false;
             compressBtn.disabled = false;
+            downloadBtn.disabled = false;
         });
 
         function showResults(results) {
@@ -502,7 +654,7 @@
                 div.innerHTML =
                     '<div class="dot ' + r.status + '"></div>' +
                     '<div class="info"><div class="name">' + r.filename + '</div>' +
-                    '<div class="detail">' + (r.status === 'ok' ? r.original_kb + ' KB → ' + r.compressed_kb + ' KB' : r.message) + '</div></div>' +
+                    '<div class="detail">' + (r.status === 'ok' ? r.original_kb + ' KB → ' + r.compressed_kb + ' KB' + (r.path ? ' — ' + r.path : '') : r.message) + '</div></div>' +
                     (r.status === 'ok' ? '<span class="badge">' + r.reduction + '</span>' : '');
                 frag.appendChild(div);
             });

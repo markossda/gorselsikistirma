@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify, send_file
 
 from compressor import compress_image
+from storage import get_client, upload_to_bucket, list_bucket_folders
 
 load_dotenv()
 
@@ -26,6 +27,20 @@ def allowed_file(filename: str) -> bool:
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/folders", methods=["GET"])
+def folders():
+    """Bucket'taki klasorleri listele."""
+    prefix = request.args.get("prefix", "")
+    try:
+        client = get_client()
+        bucket = os.environ.get("SUPABASE_BUCKET", "lifestyle-previews")
+        items = list_bucket_folders(client, bucket, prefix)
+        folders = [f["name"] for f in items if f.get("id") is None]
+        return jsonify({"folders": folders, "prefix": prefix})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/compress", methods=["POST"])
@@ -52,10 +67,8 @@ def compress():
             compressed_bytes, content_type = compress_image(original_bytes, f.filename)
             compressed_size = len(compressed_bytes)
 
-            file_id = uuid.uuid4().hex[:8]
             results.append({
                 "filename": f.filename,
-                "file_id": file_id,
                 "status": "ok",
                 "original_kb": round(original_size / 1024),
                 "compressed_kb": round(compressed_size / 1024),
@@ -106,14 +119,15 @@ def download():
 @app.route("/upload", methods=["POST"])
 def upload():
     """Görselleri sıkıştır ve Supabase'e yükle."""
-    from storage import get_client, upload_to_bucket
-
     files = request.files.getlist("images")
     if not files or files[0].filename == "":
         return jsonify({"error": "Görsel seçilmedi"}), 400
 
-    bucket = os.environ.get("SUPABASE_BUCKET", "images")
     folder = request.form.get("folder", "").strip()
+    if not folder:
+        return jsonify({"error": "Klasör seçilmedi"}), 400
+
+    bucket = os.environ.get("SUPABASE_BUCKET", "lifestyle-previews")
 
     try:
         client = get_client()
@@ -137,9 +151,8 @@ def upload():
             compressed_bytes, content_type = compress_image(original_bytes, f.filename)
             compressed_size = len(compressed_bytes)
 
-            ext = ".webp"
-            safe_name = f"{uuid.uuid4().hex[:8]}_{Path(f.filename).stem}{ext}"
-            upload_path = f"{folder}/{safe_name}" if folder else safe_name
+            safe_name = f"{Path(f.filename).stem}.webp"
+            upload_path = f"{folder}/{safe_name}"
 
             upload_to_bucket(client, bucket, upload_path, compressed_bytes, content_type)
 

@@ -18,7 +18,7 @@ def upload_to_bucket(
     content_type: str,
 ) -> dict:
     """Dosyayı Supabase Storage bucket'a yükler."""
-    res = client.storage.from_(bucket).upload(
+    client.storage.from_(bucket).upload(
         path=path,
         file=file_bytes,
         file_options={"content-type": content_type, "upsert": "true"},
@@ -26,6 +26,6 @@ def upload_to_bucket(
     return {"path": path, "status": "ok"}
 
 
-def list_bucket_files(client: Client, bucket: str, folder: str = "") -> list:
-    """Bucket'taki dosyaları listeler."""
-    return client.storage.from_(bucket).list(folder)
+def list_bucket_folders(client: Client, bucket: str, prefix: str = "") -> list:
+    """Bucket'taki klasorleri listeler."""
+    return client.storage.from_(bucket).list(prefix)
